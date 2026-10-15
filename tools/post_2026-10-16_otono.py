@@ -10,5 +10,5 @@ slides=[
  {"type":"cta","title":"¿Prefieres","accent":"olvidarte?","body":"Cuidamos tu piscina y tu jardín todo el año en Jávea y Dénia.","button":"Presupuesto por WhatsApp","note":"English spoken · link en la bio"},
 ]
 p=carousel(slides,"2026-10/otono-v2")
-photo_post("/root/.claude/uploads/a633a4d6-9781-5c8e-81cf-30028eaaa118/c6f0d566-image.jpg","2026-10/ciclamenes-v2.jpg","JARDÍN EN JÁVEA","El color del otoño",cy=0.45)
+photo_post("/root/.claude/uploads/a633a4d6-9781-5c8e-81cf-30028eaaa118/c6f0d566-image.jpg","2026-10/ciclamenes-v3.jpg","JARDÍN EN JÁVEA","El color del otoño",cy=0.45)
 contact_sheet(p+["2026-10/ciclamenes-v2.jpg"],sys.argv[1])

@@ -97,15 +97,18 @@ def _footer(d, y=H - 58, page=None, dark=False):
         tracked(d, (W - 60, y), "@JARDINESDVC", sans(22, "Medium"), SAGE, 3, anchor="r")
 
 
-def photo_post(src, out, kicker, title, crop=None, cy=0.5):
+def photo_post(src, out, kicker, title, crop=None, cy=0.5, retouch=1.0):
     """Foto enmarcada en crema con titular serif debajo.
     crop=(x0,y0,x1,y1) en coordenadas de la foto para quitar zonas (números, carteles)."""
     im = _open(src)
     if crop:
         im = im.crop(crop)
+    if retouch:
+        im = enhance(im, strength=retouch)
     c = Image.new("RGB", (W, H), CREAM)
     pw, ph = W - 80, 1040
-    c.paste(_rounded(_fit(im, pw, ph, cy), 26), (40, 40), _rounded(_fit(im, pw, ph, cy), 26))
+    tile = _rounded(_fit(im, pw, ph, cy), 26)
+    c.paste(tile, (40, 40), tile)
     d = ImageDraw.Draw(c)
     tracked(d, (60, 1150), kicker, sans(24, "SemiBold"), TERRA, 5)
     d.text((60, 1225), title, font=serif(62, "SemiBold"), fill=GREEN, anchor="ls")
@@ -114,13 +117,16 @@ def photo_post(src, out, kicker, title, crop=None, cy=0.5):
     c.save(out, quality=93)
 
 
-def before_after(a, b, out, title, kicker="ANTES Y DESPUÉS", cy=0.5):
+def before_after(a, b, out, title, kicker="ANTES Y DESPUÉS", cy=0.5, retouch=1.0):
     c = Image.new("RGB", (W, H), CREAM)
     d = ImageDraw.Draw(c)
     pw, ph = (W - 80 - 16) // 2, 1040
     for i, (src, lab) in enumerate(((a, "antes"), (b, "después"))):
         x = 40 + i * (pw + 16)
-        tile = _rounded(_fit(_open(src), pw, ph, cy), 24)
+        img = _open(src)
+        if retouch:  # mismo retoque en las dos: comparación honesta
+            img = enhance(img, strength=retouch)
+        tile = _rounded(_fit(img, pw, ph, cy), 24)
         c.paste(tile, (x, 40), tile)
         f = serif(40, "Medium", italic=True)
         tw = d.textlength(lab, font=f)
@@ -245,3 +251,76 @@ def contact_sheet(paths, out, cols=4, tw=360):
     for i, p in enumerate(paths):
         s.paste(Image.open(p).resize((tw, th)), (10 + (i % cols) * (tw + 10), 10 + (i // cols) * (th + 10)))
     s.save(out)
+
+
+# ---------------------------------------------------------------------------
+# Retoque fotográfico (estilo "revista de jardín": luz cálida, verdes vivos,
+# detalle nítido). Natural: no cambia lo que hay en la foto, solo la luz/color.
+# ---------------------------------------------------------------------------
+def enhance(src, out=None, strength=1.0, warmth=1.0, vignette=0.2):
+    """Retoque natural: abre sombras, protege cielos, verdes y flores vivos,
+    luz cálida, nitidez. strength 0.5 = suave, 1 = normal, 1.3 = intenso."""
+    import numpy as np
+    import cv2
+    im = _open(src) if isinstance(src, str) else src.convert("RGB")
+    a = np.asarray(im).astype(np.float32) / 255.0
+    k = strength
+
+    lum = a @ np.array([0.299, 0.587, 0.114], np.float32)
+    # 1) exposición automática suave hacia una mediana ~0.48
+    med = float(np.median(lum))
+    if med < 0.46:
+        g = np.clip(np.log(0.48) / np.log(max(med, 0.05)), 0.75, 1.0)
+        a = a ** (1 - (1 - g) * k)
+        lum = a @ np.array([0.299, 0.587, 0.114], np.float32)
+
+    # 2) abrir sombras y proteger luces (según luminancia)
+    sh = (1 - lum) ** 3
+    hi = np.clip((lum - 0.75) / 0.25, 0, 1) ** 2
+    gain = 1 + 0.45 * k * sh - 0.10 * k * hi
+    a = np.clip(a * gain[..., None], 0, 1)
+
+    # 3) claridad: contraste local (CLAHE en L) mezclado suave
+    lab = cv2.cvtColor((a * 255).astype(np.uint8), cv2.COLOR_RGB2LAB)
+    L = lab[..., 0].astype(np.float32)
+    cl = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8)).apply(lab[..., 0]).astype(np.float32)
+    lab[..., 0] = np.clip(L * (1 - 0.45 * k) + cl * 0.45 * k, 0, 255).astype(np.uint8)
+    a = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB).astype(np.float32) / 255.0
+
+    # 4) contraste global suave en medios (curva S)
+    a = np.clip(a + 0.10 * k * (a - 0.5) * (1 - np.abs(2 * a - 1)), 0, 1)
+
+    # 5) vibrance + verdes y flores algo más vivos
+    hsv = cv2.cvtColor((a * 255).astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+    H, S = hsv[..., 0], hsv[..., 1] / 255.0
+    boost = 1 + 0.35 * k * (1 - S)
+    green = np.exp(-((H - 50) / 18) ** 2)          # amarillo-verde a verde
+    boost += 0.12 * k * green
+    hsv[..., 1] = np.clip(hsv[..., 1] * boost, 0, 255)
+    # verdes amarillentos (césped seco) un poco hacia verde
+    hsv[..., 0] = np.where((H > 22) & (H < 40), H + 3 * k * (1 - np.abs(H - 31) / 9), H)
+    a = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
+
+    # 6) calidez "hora dorada"
+    w = 0.04 * warmth * k
+    a[..., 0] = np.clip(a[..., 0] * (1 + w), 0, 1)
+    a[..., 1] = np.clip(a[..., 1] * (1 + w * 0.35), 0, 1)
+    a[..., 2] = np.clip(a[..., 2] * (1 - w * 0.6), 0, 1)
+
+    # 7) nitidez
+    u8 = (a * 255).astype(np.uint8)
+    blur = cv2.GaussianBlur(u8, (0, 0), 1.6)
+    u8 = cv2.addWeighted(u8, 1 + 0.5 * k, blur, -0.5 * k, 0)
+
+    # 8) viñeta suave
+    if vignette:
+        h, wd = u8.shape[:2]
+        yy, xx = np.mgrid[0:h, 0:wd]
+        r = np.sqrt(((xx - wd / 2) / (wd / 2)) ** 2 + ((yy - h / 2) / (h / 2)) ** 2)
+        m = 1 - vignette * np.clip(r - 0.65, 0, 1) ** 1.5
+        u8 = np.clip(u8 * m[..., None], 0, 255).astype(np.uint8)
+
+    res = Image.fromarray(u8)
+    if out:
+        res.save(out, quality=95)
+    return res
