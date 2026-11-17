@@ -155,16 +155,16 @@ def _wrap(d, text, font, width):
     return out
 
 
-def carousel(slides, prefix):
+def carousel(slides, prefix, start=1, total=None):
     """slides: lista de dicts.
       {"type":"cover","kicker":..,"title":..,"accent":..,"sub":.., "photo": opcional}
       {"type":"tip","title":..,"body":..,"tip":..}
       {"type":"cta","title":..,"accent":..,"body":..,"button":..,"note":..}
     Guarda prefix-1.jpg ... prefix-n.jpg y devuelve la lista de rutas."""
-    n = len(slides)
+    n = total or len(slides)
     paths = []
     k = 0
-    for i, s in enumerate(slides, 1):
+    for i, s in enumerate(slides, start):
         page = f"{i:02d} / {n:02d}"
         if s["type"] == "cta":
             c = Image.new("RGB", (W, H), GREEN)
@@ -324,3 +324,31 @@ def enhance(src, out=None, strength=1.0, warmth=1.0, vignette=0.2):
     if out:
         res.save(out, quality=95)
     return res
+
+
+def gallery_slide(src, out, page=None, caption=None, cy=0.5, retouch=1.0, rotate=0.0):
+    """Foto a sangre completa (sin marco) para carruseles de galería.
+    rotate: grados para enderezar el horizonte (positivo = antihorario)."""
+    im = _open(src)
+    if rotate:
+        w0, h0 = im.size
+        im = im.rotate(rotate, resample=Image.BICUBIC, expand=False)
+        m = int(max(w0, h0) * abs(math.sin(math.radians(rotate)))) + 4
+        im = im.crop((m, m, w0 - m, h0 - m))
+    if retouch:
+        im = enhance(im, strength=retouch)
+    c = _fit(im, W, H, cy).convert("RGB")
+    # degradado inferior suave para que se lea el texto
+    grad = Image.new("L", (1, 260))
+    for y in range(260):
+        grad.putpixel((0, y), int(150 * (y / 259) ** 1.6))
+    grad = grad.resize((W, 260))
+    dark = Image.new("RGB", (W, 260), (18, 30, 22))
+    c.paste(dark, (0, H - 260), grad)
+    d = ImageDraw.Draw(c)
+    if caption:
+        d.text((60, H - 112), caption, font=serif(44, "Medium", italic=True), fill=CREAM, anchor="ls")
+    tracked(d, (60, H - 46), "JARDINES DVC", sans(22, "SemiBold"), CREAM, 5)
+    if page:
+        tracked(d, (W - 60, H - 46), page, sans(22, "Medium"), (220, 226, 210), 3, anchor="r")
+    c.save(out, quality=93)
