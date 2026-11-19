@@ -77,3 +77,32 @@ def before_after_reel(before_img, after_video, out, kicker, title, before_secs=2
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(before_secs + 1.5), "-i", out,
                     "-frames:v", "1", "-q:v", "2", cover], check=True)
     return out, cover
+
+
+def slideshow_reel(slides, out, kicker, title, secs=3.0, fade=0.6):
+    """Reel tipo paseo: varias fotos con zoom lento y fundido.
+    slides: lista de (ruta_foto, etiqueta) — la etiqueta va en la píldora inferior."""
+    tmp = tempfile.mkdtemp()
+    ww, wh = WIN[2] - WIN[0], WIN[3] - WIN[1]
+    n = int(secs * 30)
+    inputs, fc = [], ""
+    for i, (src, label) in enumerate(slides):
+        im = b._fit(b.enhance(src, strength=0.8), int(ww * 1.08), int(wh * 1.08))
+        im.save(f"{tmp}/s{i}.jpg", quality=95)
+        _frame(kicker, title, label, b.GREEN).save(f"{tmp}/f{i}.png")
+        inputs += ["-i", f"{tmp}/s{i}.jpg", "-i", f"{tmp}/f{i}.png"]  # zoompan genera n fotogramas
+        zin = i % 2 == 0  # alterna acercar / alejar
+        z = f"1+0.06*on/{n}" if zin else f"1.06-0.06*on/{n}"
+        fc += (f"[{2*i}:v]scale={int(ww*1.08)}:{int(wh*1.08)},zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+               f":d={n}:s={ww}x{wh}:fps=30,setsar=1[p{i}];"
+               f"color=c=0xF3EEE3:s={RW}x{RH}:r=30:d={secs}[bg{i}];"
+               f"[bg{i}][p{i}]overlay={WIN[0]}:{WIN[1]}:shortest=1[c{i}];[c{i}][{2*i+1}:v]overlay=0:0,format=yuv420p[v{i}];")
+    acc, t = "v0", secs
+    for i in range(1, len(slides)):
+        fc += f"[{acc}][v{i}]xfade=transition=fade:duration={fade}:offset={t - fade:.2f}[x{i}];"
+        acc, t = f"x{i}", t + secs - fade
+    fc = fc.rstrip(";")
+    cmd = ["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", fc, "-map", f"[{acc}]", "-an",
+           "-c:v", "libx264", "-preset", "slow", "-crf", "19", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
+    subprocess.run(cmd, check=True)
+    return out
